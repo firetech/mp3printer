@@ -417,42 +417,44 @@
     for (var i = 0; i < uploads.length; i++) {
       var upload = uploads[i];
       try {
-        var req = new XMLHttpRequest();
-        req.onreadystatechange = function (aEvt) {
-          if (req.readyState == 4) {
-            uploadDone();
-            if (req.status != 200) {
-              addError(req.responseText);
-            }
-          }
+        var id, url;
+        var options = {
+          headers: { 'Nick': nick },
         };
-        var id, body;
         switch(upload.type) {
         case 'file':
           id = uploadId(nick, upload.file.name);
-          body = upload.file;
-          req.open('put', 'add-file', true);
-          req.setRequestHeader('Filename', upload.file.name);
-          req.setRequestHeader('Content-Type', upload.file.type);
+          url = '/add-file';
+          options.method = 'PUT';
+          options.body = upload.file;
+          options.headers['Filename'] = upload.file.name;
+          options.headers['Content-Type'] = upload.file.type;
           break;
         case 'link':
           id = uploadId(nick, upload.link);
-          body = upload.link;
-          req.open('post', 'add-link', true);
+          url = '/add-link';
+          options.method = 'POST';
+          options.body = upload.link;
           break;
         default:
           throw new Error("Unsupported type '"+upload.type+"'");
         }
-        req.setRequestHeader('Nick', nick);
-        req.setRequestHeader('Upload-Id', id);
+        options.headers['Upload-Id'] = id;
         if (last_id) {
-          req.setRequestHeader('Parent-Id', last_id);
+          options.headers['Parent-Id'] = last_id;
         }
-        req.send(body);
         last_id = id;
+        fetch(url, options)
+          .then(function(response) {
+            if (!response.ok) {
+              response.text().then(function(text) { addError(text); });
+            }
+          })
+          .catch(function(err) { addError(err.message); })
+          .finally(uploadDone);
       } catch(err) {
         addError(err.message);
-        uploadDone();
+        uploaddone();
       }
     }
   }
