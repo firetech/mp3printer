@@ -20,7 +20,7 @@
   .child-elements {
     pointer-events: none;
   }
-  a {
+  a, .printtable {
     pointer-events: auto;
   }
 
@@ -165,6 +165,24 @@
     100% { color: rgba(208, 177,27, 1.0); }
   }
 
+  .printtable .cancel-song {
+    font-family: monospace;
+    margin-right: 0.2em;
+  }
+  .printtable .cancel-song::before, .printtable .cancel-song::after {
+    color: #806d11;
+    text-shadow: none;
+  }
+  .printtable .cancel-song::before {
+    content: '[';
+  }
+  .printtable .cancel-song::after {
+    content: ']';
+  }
+  .printtable .cancel-song a::before {
+    content: 'X';
+  }
+
   #foot{
     padding: 1em;
   }
@@ -241,7 +259,7 @@
   function addTable(list, position) {
     var table = $('<table></table>').addClass('printtable');
     var headerRow = $('<tr></tr>');
-    var headers = ['Track','Progress','User', 'Prio'];
+    var headers = ['Track', 'Dur', 'Progress','User', 'Prio'];
     for (var i=0; i<headers.length; i++){
       var header = $('<th></th>').text(headers[i]);
       headerRow.append(header);
@@ -255,10 +273,9 @@
       var nameCell = $('<td></td>')
         .appendTo(row);
       if (curr['address'] == myaddress){
-        var prefix = $('<code></code>');
-        prefix.append('[');
-        prefix.append($('<a></a>', {
-          text: 'X',
+        var cancel = $('<span></span>', {
+          class: 'cancel-song'});
+        cancel.append($('<a></a>', {
           title: 'Cancel song',
           href: '#',
           data: { id: curr['id'] },
@@ -271,15 +288,30 @@
             sendWS(JSON.stringify(cancelMessage));
           }
         }));
-        prefix.append(']');
-        nameCell.append(prefix);
-        nameCell.append('\u00A0'); // &nbsp;
+        nameCell.append(cancel);
       }
       nameCell.append($('<a></a>', {
         target: '_blank',
         href: 'download/'+encodeURIComponent(curr['id']),
         text: curr['title']
       }));
+
+      var durCell = $('<td></td>')
+        .appendTo(row);
+      if (curr['duration'] !== null) {
+        var duration = Math.round(curr['duration']);
+        var parts = [];
+        while (duration > 0 && parts.length < 2) {
+          parts.push(String(duration % 60).padStart(2, '0'));
+          duration = (duration / 60) >> 0;
+        }
+        if (duration > 0 || parts.length < 2) {
+          parts.push(String(duration).padStart(2, '0'));
+        }
+        durCell.text(parts.reverse().join(":").replace(/^0+(\d:)/, '$1'));
+      } else {
+        durCell.text('?');
+      }
 
       var meterCell = $('<td></td>')
         .appendTo(row);

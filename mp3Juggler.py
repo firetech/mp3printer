@@ -24,6 +24,7 @@ class TrackInputCommon(pyd.BaseModel):
     nick: str | None = None
     address: str | None
     title: str
+    duration: float | None = None
     mrl: str
 
 
@@ -235,6 +236,7 @@ class Juggler(player.PlayerListener):
                         upload_id=track_input.upload_id,
                         nick=track_input.nick,
                         title=track_input.title,
+                        duration=track_input.duration,
                         filename=track_input.filename,
                         extn=track_input.extn,
                         address=track_input.address,
@@ -247,6 +249,7 @@ class Juggler(player.PlayerListener):
                         upload_id=track_input.upload_id,
                         nick=track_input.nick,
                         title=track_input.title,
+                        duration=track_input.duration,
                         address=track_input.address,
                         mrl=track_input.mrl,
                     )
@@ -358,6 +361,7 @@ class Juggler(player.PlayerListener):
                         _types.ListContentResponseEntry(
                             id=item.id,
                             title=item.title,
+                            duration=item.duration,
                             nick=item.nick,
                             address=item.address,
                             prio=item.prio,

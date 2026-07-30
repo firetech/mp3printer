@@ -17,6 +17,7 @@ class AddressResponse(pyd.BaseModel):
 class ListContentResponseEntry(pyd.BaseModel):
     id: str
     title: str
+    duration: float | None
     nick: str | None
     address: str | None
     prio: int

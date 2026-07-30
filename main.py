@@ -131,8 +131,10 @@ class AddFile(tornado.web.RequestHandler):
                     if tags.artist:
                         title = f"{tags.artist} - {title}"
                     self.metadata.title = title
-            except:
-                pass
+                if tags.duration is not None:
+                    self.metadata.duration = tags.duration
+            except Exception as e:
+                print(f"Error getting file metadata: {e}")
             juggler.juggle(self.metadata, self.request.headers.get("Parent-Id"))
             self.done = True
             self.finish()  # pyright: ignore[reportUnknownMemberType]
@@ -195,12 +197,14 @@ class AddLink(tornado.web.RequestHandler):
             ) as ydl:
                 info_dict = ydl.extract_info(link, download=False)
                 title = info_dict.get("title") or link
+                duration = info_dict.get("duration")
             assert juggler is not None
             juggler.juggle(
                 mp3Juggler.LinkTrackInput(
                     upload_id=self.request.headers.get("Upload-Id"),
                     nick=self.request.headers.get("Nick"),
                     title=title,
+                    duration=duration,
                     address=remote_ip(self.request),
                     mrl=link,
                 ),
