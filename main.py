@@ -346,6 +346,7 @@ if __name__ == "__main__":
         "-b",
         "--bind",
         type=str,
+        metavar="IP",
         help="IP to run HTTP server on (default: any IP)",
         default=None,
     )
@@ -354,6 +355,7 @@ if __name__ == "__main__":
             "-c",
             "--chromecast",
             type=str,
+            metavar="NAME",
             help="Name of Chromecast (or Chromecast group) to cast to.",
             default=None,
         )
@@ -365,6 +367,7 @@ if __name__ == "__main__":
         )
     parser.add_argument(
         "port",
+        metavar="PORT",
         type=int,
         nargs="?",
         help="Port number to run HTTP server on (default 80)",
