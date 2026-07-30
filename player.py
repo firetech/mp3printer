@@ -1,7 +1,17 @@
 # pyright: strict
 
+import enum
 import random
-from typing import Any, Literal, NotRequired, Protocol, TypeAlias, TypedDict, cast
+from typing import (
+    Any,
+    Final,
+    Literal,
+    NotRequired,
+    Protocol,
+    TypeAlias,
+    TypedDict,
+    cast,
+)
 
 import pydantic as pyd
 import vlc  # pyright: ignore[reportMissingTypeStubs]
@@ -32,15 +42,35 @@ class LinkTrackInfo(CommonTrackInfo):
 TrackInfo: TypeAlias = FileTrackInfo | LinkTrackInfo
 
 
+class FallbackType(enum.Enum):
+    NONE = 0
+    SLAYRADIO = 1
+    DUBSTEP = 2
+    POPLOVE = 3
+
+
 class Player:
 
-    SLAYRADIO = "http://relay.slayradio.org:8000/"
-    DUBSTEP = [
+    SLAYRADIO: Final = "http://relay.slayradio.org:8000/"
+    DUBSTEP: Final = [
         "https://www.youtube.com/watch?v=dLyH94jNau0",
         "https://www.youtube.com/watch?v=RRucF7ffPRE",
         "https://www.youtube.com/watch?v=nXaMKZApYDM",
     ]
-    SCRATCH = "shortscratch.wav"
+    POPLOVE: Final = [
+        "https://www.youtube.com/watch?v=QcYn1xM7VZg",
+        "https://www.youtube.com/watch?v=b6MGVFBpi9Q",
+        "https://www.youtube.com/watch?v=KuPBK8Bx3iI",
+        "https://www.youtube.com/watch?v=mX8f5nfkr7E",
+        "https://www.youtube.com/watch?v=TXGtR1_iyDg",
+        "https://www.youtube.com/watch?v=KPFVrhUdrHk",
+        "https://www.youtube.com/watch?v=0YVwtb8pZZY",
+        "https://www.youtube.com/watch?v=XUkU0noAGck",
+        "https://www.youtube.com/watch?v=BpEQMV_Pih0",
+        "https://www.youtube.com/watch?v=zQAFN1NZd50",
+        "https://www.youtube.com/watch?v=-sAEJaKwFZM",
+    ]
+    SCRATCH: Final = "shortscratch.wav"
 
     def __init__(self, listener: PlayerListener, args: PlayerArgs):
         self._listener = listener
@@ -75,16 +105,17 @@ class Player:
             1,
         )
 
-        self._playingDubstep = False
-        self._shouldPlayDubstep = random.randint(0, 1) == 1
+        self._fallback_type = FallbackType.NONE
+        self._previous_fallback_type = FallbackType.NONE
+        self._current_fallback_track = None
 
     def release(self):
         self._mediaplayer.stop()
         self._instance.release()
 
-    def _handleDubstep(self):
-        self._playingDubstep = False
-        self._shouldPlayDubstep = not self._shouldPlayDubstep
+    def _clearFallback(self):
+        self._fallback_type = FallbackType.NONE
+        self._current_fallback_track = None
 
     def _get_link_url(self, link: str):
         with yt_dlp.YoutubeDL(
@@ -109,7 +140,7 @@ class Player:
 
     def play(self, track: TrackInfo, position: float | None = None):
         try:
-            self._handleDubstep()
+            self._clearFallback()
             print("Now playing: " + track.title)
             mrl = track.mrl
             if (
@@ -126,7 +157,7 @@ class Player:
         self._mediaplayer.pause()
 
     def scratch(self):
-        self._handleDubstep()
+        self._clearFallback()
         self._play_mrl(self.SCRATCH)
 
     def get_position(self):
@@ -134,28 +165,56 @@ class Player:
 
     @property
     def fallback_type(self):
-        if self._playingDubstep:
-            return "dubstep"
-        else:
-            return "Slay Radio"
+        match self._fallback_type:
+            case FallbackType.NONE:
+                return "nothing"
+            case FallbackType.SLAYRADIO:
+                return "Slay Radio"
+            case FallbackType.DUBSTEP:
+                return "dubstep"
+            case FallbackType.POPLOVE:
+                return "PopLove"
 
     def play_fallback(self):
         try:
-            if self._shouldPlayDubstep:
-                if self._playingDubstep:
-                    self._dubstepTrack = (self._dubstepTrack + 1) % len(self.DUBSTEP)
-                    position = None
-                else:
-                    self._dubstepTrack = random.randint(0, len(self.DUBSTEP) - 1)
-                    position = random.random()
-                self._playingDubstep = True
-                print("Now playing: Dubstep")
-                url = self._get_link_url(self.DUBSTEP[self._dubstepTrack])
-                assert url is not None, "Error getting fallback URL"
-                self._play_mrl(url, position)
-            else:
-                print("Now playing: Slay Radio")
-                self._play_mrl(self.SLAYRADIO)
+            last_fallback_type = self._fallback_type
+            if self._fallback_type == FallbackType.NONE:
+                self._fallback_type = self._previous_fallback_type
+                while self._fallback_type == self._previous_fallback_type:
+                    self._fallback_type = FallbackType(
+                        random.randint(1, len(FallbackType) - 1)
+                    )
+                self._previous_fallback_type = self._fallback_type
+            match self._fallback_type:
+                case FallbackType.NONE:
+                    pass  # This is impossible
+                case FallbackType.SLAYRADIO:
+                    print("Now playing: Slay Radio")
+                    self._play_mrl(self.SLAYRADIO)
+                case FallbackType.DUBSTEP:
+                    print("Now playing: Dubstep")
+                    self._play_fallback_list(
+                        self.DUBSTEP, last_fallback_type == FallbackType.NONE
+                    )
+                case FallbackType.POPLOVE:
+                    print("Now playing: PopLove")
+                    self._play_fallback_list(
+                        self.POPLOVE, last_fallback_type == FallbackType.NONE
+                    )
+                    pass
         except Exception as err:
             print(err)
+            self._fallback_type = FallbackType.NONE
             self._listener.song_finished()
+
+    def _play_fallback_list(self, fallback_list: list[str], start_random: bool):
+        last_fallback_track = self._current_fallback_track
+        self._current_fallback_track = random.randint(0, len(fallback_list) - 1)
+        # Make sure we don't select the same one (unless the list is only a single item)
+        if self._current_fallback_track == last_fallback_track:
+            self._current_fallback_track = (self._current_fallback_track + 1) % len(
+                fallback_list
+            )
+        url = self._get_link_url(fallback_list[self._current_fallback_track])
+        assert url is not None, "Error getting fallback URL"
+        self._play_mrl(url, random.random() if start_random else None)
