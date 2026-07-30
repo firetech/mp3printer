@@ -43,6 +43,7 @@ loop = None
 clients = None
 juggler = None
 http_server = None
+persist_dir = None
 
 ANSI_ESCAPE: Final = re.compile(r"(\x9B|\x1B\[)[0-?]*[ -/]*[@-~]")
 ERROR_PREFIX: Final = re.compile(r"^[Ee][Rr][Rr]([Oo][Rr])?:\s*")
@@ -78,7 +79,9 @@ class AddFile(tornado.web.RequestHandler):
         self.error: Exception | None = None
         self.done = False
         try:
-            free = shutil.disk_usage(tempfile.gettempdir()).free
+            free = shutil.disk_usage(
+                persist_dir if persist_dir is not None else tempfile.gettempdir()
+            ).free
             if int(self.request.headers.get("Content-Length", 0)) > free / 2:
                 raise Exception("Uploaded file too large for current free space")
             file_type = self.request.headers.get("Content-Type", "")
@@ -91,9 +94,8 @@ class AddFile(tornado.web.RequestHandler):
                 base, extn = os.path.splitext(filename)
             else:
                 base, extn = None, None
-            tf = tempfile.NamedTemporaryFile(
-                prefix=base, suffix=extn, delete_on_close=False
-            )
+            fd, path = tempfile.mkstemp(prefix=base, suffix=extn, dir=persist_dir)
+            self.fh = os.fdopen(fd, "wb")
             self.metadata = mp3Juggler.FileTrackInput(
                 upload_id=self.request.headers.get("Upload-Id"),
                 nick=self.request.headers.get("Nick"),
@@ -101,10 +103,8 @@ class AddFile(tornado.web.RequestHandler):
                 filename=filename,
                 extn=extn,
                 address=remote_ip(self.request),
-                mrl=tf.name,
-                handle=tf,
+                mrl=path,
             )
-            self.fh = tf
         except Exception as err:
             self.error = err
 
@@ -125,7 +125,7 @@ class AddFile(tornado.web.RequestHandler):
             assert juggler is not None
             assert self.metadata is not None
             try:
-                tags = tinytag.TinyTag.get(self.fh.name)
+                tags = tinytag.TinyTag.get(self.metadata.mrl)
                 if tags.title:
                     title = tags.title
                     if tags.artist:
@@ -293,7 +293,7 @@ def start(
     loop = tornado.ioloop.IOLoop.current()
 
     clients = connections.Connections(loop)
-    juggler = mp3Juggler.Juggler(clients, player_args)
+    juggler = mp3Juggler.Juggler(clients, persist_dir, player_args)
 
     application = tornado.web.Application(
         [
@@ -368,6 +368,13 @@ if __name__ == "__main__":
         help="Port number to run HTTP server on (default 80)",
         default=80,
     )
+    parser.add_argument(
+        "-p",
+        "--persist",
+        type=str,
+        metavar="DIR",
+        help="Store queue content and uploaded files in this directory",
+    )
     args = parser.parse_args()
 
     player_args: player.PlayerArgs = {}
@@ -403,6 +410,10 @@ if __name__ == "__main__":
 
     if args.proxied:
         remote_ip = forwarded_remote_ip
+
+    if args.persist:
+        os.makedirs(args.persist, exist_ok=True)
+        persist_dir = args.persist
 
     def signal_handler(sig: int, _: Any):
         print(f"\nSignal {sig} caught, exiting...")

@@ -77,7 +77,6 @@ class Player:
 
         self._playingDubstep = False
         self._shouldPlayDubstep = random.randint(0, 1) == 1
-        self.play_fallback()
 
     def release(self):
         self._mediaplayer.stop()
@@ -98,13 +97,17 @@ class Player:
             info_dict = ydl.extract_info(link, download=False)
             return info_dict.get("url", None)
 
-    def _play_mrl(self, mrl: str):
+    def _play_mrl(self, mrl: str, position: float | None = None):
         self._mediaplayer.set_mrl(  # pyright: ignore[reportUnknownMemberType]
             mrl, *self._media_opts
         )
         self._mediaplayer.play()
+        if position is not None:
+            self._mediaplayer.set_position(  # pyright: ignore[reportUnknownMemberType]
+                position
+            )
 
-    def play(self, track: TrackInfo):
+    def play(self, track: TrackInfo, position: float | None = None):
         try:
             self._handleDubstep()
             print("Now playing: " + track.title)
@@ -114,7 +117,7 @@ class Player:
                 and (link_mrl := self._get_link_url(mrl)) is not None
             ):
                 mrl = link_mrl
-            self._play_mrl(mrl)
+            self._play_mrl(mrl, position)
         except Exception as err:
             print(err)
             self._listener.song_finished()
@@ -141,7 +144,7 @@ class Player:
             if self._shouldPlayDubstep:
                 if self._playingDubstep:
                     self._dubstepTrack = (self._dubstepTrack + 1) % len(self.DUBSTEP)
-                    position = 0
+                    position = None
                 else:
                     self._dubstepTrack = random.randint(0, len(self.DUBSTEP) - 1)
                     position = random.random()
@@ -149,10 +152,7 @@ class Player:
                 print("Now playing: Dubstep")
                 url = self._get_link_url(self.DUBSTEP[self._dubstepTrack])
                 assert url is not None, "Error getting fallback URL"
-                self._play_mrl(url)
-                self._mediaplayer.set_position(  # pyright: ignore[reportUnknownMemberType]
-                    position
-                )
+                self._play_mrl(url, position)
             else:
                 print("Now playing: Slay Radio")
                 self._play_mrl(self.SLAYRADIO)
