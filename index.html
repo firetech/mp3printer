@@ -264,11 +264,11 @@
           data: { id: curr['id'] },
           click: function(event) {
             event.preventDefault();
-            var skipMessage={
-              'type': 'skip',
+            var cancelMessage={
+              'type': 'cancel',
               'id': $(event.target).data('id')
             };
-            sendWS(JSON.stringify(skipMessage));
+            sendWS(JSON.stringify(cancelMessage));
           }
         }));
         prefix.append(']');

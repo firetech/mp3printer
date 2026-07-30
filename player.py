@@ -3,6 +3,7 @@
 import random
 from typing import Any, Literal, NotRequired, Protocol, TypeAlias, TypedDict, cast
 
+import pydantic as pyd
 import vlc  # pyright: ignore[reportMissingTypeStubs]
 import yt_dlp
 
@@ -15,17 +16,17 @@ class PlayerArgs(TypedDict):
     chromecast: NotRequired[tuple[str, int]]
 
 
-class CommonTrackInfo(TypedDict):
+class CommonTrackInfo(pyd.BaseModel):
     title: str
     mrl: str
 
 
 class FileTrackInfo(CommonTrackInfo):
-    type: Literal["file"]
+    type: Literal["file"] = "file"
 
 
 class LinkTrackInfo(CommonTrackInfo):
-    type: Literal["link"]
+    type: Literal["link"] = "link"
 
 
 TrackInfo: TypeAlias = FileTrackInfo | LinkTrackInfo
@@ -33,7 +34,7 @@ TrackInfo: TypeAlias = FileTrackInfo | LinkTrackInfo
 
 class Player:
 
-    SLAYRADIO = "http://relay3.slayradio.org:8000/"
+    SLAYRADIO = "http://relay.slayradio.org:8000/"
     DUBSTEP = [
         "https://www.youtube.com/watch?v=dLyH94jNau0",
         "https://www.youtube.com/watch?v=RRucF7ffPRE",
@@ -106,10 +107,10 @@ class Player:
     def play(self, track: TrackInfo):
         try:
             self._handleDubstep()
-            print("Now playing: " + track["title"])
-            mrl = track["mrl"]
+            print("Now playing: " + track.title)
+            mrl = track.mrl
             if (
-                track["type"] == "link"
+                track.type == "link"
                 and (link_mrl := self._get_link_url(mrl)) is not None
             ):
                 mrl = link_mrl

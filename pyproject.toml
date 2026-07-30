@@ -5,6 +5,7 @@ description = "A collaborative jukebox for (LAN) parties"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "pydantic>=2.13.4",
     "python-vlc>=3.0.21203",
     "tinytag>=2.2.1",
     "tornado>=6.5.7",

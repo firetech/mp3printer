@@ -1,11 +1,11 @@
 # pyright: strict
 
-import json
 import threading
-from typing import Any
 
 import tornado.ioloop
 import tornado.websocket
+
+import _types
 
 
 class Connections:
@@ -28,12 +28,12 @@ class Connections:
         finally:
             self.lock.release()
 
-    def message_clients(self, message: Any):
+    def message_clients(self, message: _types.Response):
         self.lock.acquire()
         try:
             for client in self._clients:
                 self._ioloop.add_callback(  # pyright: ignore[reportUnknownMemberType]
-                    client.write_message, json.dumps(message)
+                    client.write_message, message.model_dump_json()
                 )
         finally:
             self.lock.release()

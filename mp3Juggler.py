@@ -4,67 +4,60 @@ import collections
 import threading
 import time
 import uuid
-from typing import IO, Literal, NotRequired, TypeAlias, TypedDict
+from typing import Any, Final, Literal, TypeAlias
+
+import pydantic as pyd
 
 # local libs
+import _types
 import connections
 import player
 
-
-class ListResponseEntry(TypedDict):
-    id: str
-    title: str
-    nick: str | None
-    address: str | None
-    prio: int
+STATE_FILENAME: Final = "state.json"
 
 
-class ListResponse(TypedDict):
-    type: Literal["list"]
-    position: float
-    list: list[ListResponseEntry]
-
-
-class FallbackResponse(TypedDict):
-    type: Literal["fallback"]
-    description: str
-
-
-class TrackInputCommon(TypedDict):
-    upload_id: NotRequired[str | None]
-    nick: NotRequired[str | None]
+class TrackInputCommon(pyd.BaseModel):
+    upload_id: str | None = None
+    nick: str | None = None
     address: str | None
     title: str
     mrl: str
 
 
 class FileTrackInput(TrackInputCommon):
-    type: Literal["file"]
-    filename: str | None
-    extn: str | None
-    handle: IO[bytes]
+    model_config = {"arbitrary_types_allowed": True}
+
+    type: Literal["file"] = "file"
+    filename: str | None = None
+    extn: str | None = None
+    handle: Any
 
 
 class LinkTrackInput(TrackInputCommon):
-    type: Literal["link"]
+    type: Literal["link"] = "link"
 
 
-class TrackAssigned(TypedDict):
+class TrackAssigned(pyd.BaseModel):
     id: str
     prio: int
 
 
-class FileTrack(TrackAssigned, FileTrackInput): ...
+class FileTrack(TrackAssigned, FileTrackInput, player.FileTrackInfo): ...
 
 
-class LinkTrack(TrackAssigned, LinkTrackInput): ...
+class LinkTrack(TrackAssigned, LinkTrackInput, player.LinkTrackInfo): ...
 
 
 TrackInput: TypeAlias = FileTrackInput | LinkTrackInput
 Track: TypeAlias = FileTrack | LinkTrack
 
 
-class DownloadInfo(TypedDict):
+class PersistentState(pyd.BaseModel):
+    queue: list[Track]
+    position: float | None
+
+
+class DownloadInfo(pyd.BaseModel):
     type: Literal["file", "link"]
     filename: str | None
     mrl: str
@@ -100,10 +93,13 @@ class Juggler(player.PlayerListener):
         self._running = False
         self.lock = threading.RLock()
 
+    def __del__(self):
+        self.stop()
+
     def _remove_song(self, index: int, song: Track | None = None):
         if song is None:
             song = self._songlist[index]
-        self._counts[song["address"]] -= 1
+        self._counts[song.address] -= 1
         del self._songlist[index]
 
     def start(self):
@@ -150,43 +146,60 @@ class Juggler(player.PlayerListener):
         try:
             if parent_id is not None:
                 for song in reversed(self._songlist):
-                    if "upload_id" in song and song["upload_id"] == parent_id:
+                    if song.upload_id == parent_id:
                         break
                 else:  # Not found
                     if not parent_id in self._waiting:
                         self._waiting[parent_id] = _ParentWaiter(self.lock)
-                    if not (self._waiting[parent_id].wait(30)):
+                    if not self._waiting[parent_id].wait(30):
                         return
 
-            self._counts[track_input["address"]] += 1
-            prio = max(self._counts[track_input["address"]] - 3, 0)
+            self._counts[track_input.address] += 1
+            prio = max(self._counts[track_input.address] - 3, 0)
             index = 0
             if len(self._songlist) > 0:
                 index = 1
                 for item in self._songlist[1:]:
-                    if item["prio"] > prio:
+                    if item.prio > prio:
                         break
                     index += 1
-            extn = track_input["extn"] if "extn" in track_input else None
-            juggle_data: TrackAssigned = {
-                "id": str(uuid.uuid4()) + (extn or ""),
-                "prio": prio,
-            }
-            # Apparently, the typing is a bit too complicated for pyright.
-            # This seemingly redundant structure is needed to not confuse it.
-            match track_input["type"]:
+            extn = track_input.extn if isinstance(track_input, FileTrackInput) else None
+            queue_id = str(uuid.uuid4()) + (extn or "")
+            match track_input.type:
                 case "file":
-                    track: Track = {**juggle_data, **track_input}
+                    track = FileTrack(
+                        id=queue_id,
+                        prio=prio,
+                        upload_id=track_input.upload_id,
+                        nick=track_input.nick,
+                        title=track_input.title,
+                        filename=track_input.filename,
+                        extn=track_input.extn,
+                        address=track_input.address,
+                        mrl=track_input.mrl,
+                        handle=track_input.handle,
+                    )
                 case "link":
-                    track: Track = {**juggle_data, **track_input}
+                    track = LinkTrack(
+                        id=queue_id,
+                        prio=prio,
+                        upload_id=track_input.upload_id,
+                        nick=track_input.nick,
+                        title=track_input.title,
+                        address=track_input.address,
+                        mrl=track_input.mrl,
+                    )
             self._songlist.insert(index, track)
 
             if len(self._songlist) == 1:
                 self._player.play(track)
 
-            if "upload_id" in track_input and track_input["upload_id"] in self._waiting:
-                self._waiting[track_input["upload_id"]].done(True)
-                del self._waiting[track_input["upload_id"]]
+            if (
+                track_input.upload_id is not None
+                and track_input.upload_id in self._waiting
+            ):
+                self._waiting[track_input.upload_id].done(True)
+                del self._waiting[track_input.upload_id]
         finally:
             self.lock.release()
         self._clients.message_clients(self.get_list())
@@ -195,14 +208,14 @@ class Juggler(player.PlayerListener):
         self.lock.acquire()
         try:
             for song in self._songlist:
-                if song["id"] == track_id:
-                    return {
-                        "type": song["type"],
-                        "filename": (
-                            song["filename"] if song["type"] == "file" else None
+                if song.id == track_id:
+                    return DownloadInfo(
+                        type=song.type,
+                        filename=(
+                            song.filename if isinstance(song, FileTrack) else None
                         ),
-                        "mrl": song["mrl"],
-                    }
+                        mrl=song.mrl,
+                    )
             else:  # Not found
                 return None
         finally:
@@ -212,7 +225,7 @@ class Juggler(player.PlayerListener):
         self.lock.acquire()
         try:
             for i, song in list(enumerate(self._songlist)):
-                if song["id"] == track_id and song["address"] == address:
+                if song.id == track_id and song.address == address:
                     if i == 0:
                         self.skip()
                     else:
@@ -251,7 +264,7 @@ class Juggler(player.PlayerListener):
         finally:
             self.lock.release()
         if position > 0:
-            self._clients.message_clients({"type": "progress", "position": position})
+            self._clients.message_clients(_types.ProgressResponse(position=position))
 
     def play_next(self):
         while self._running:
@@ -268,35 +281,34 @@ class Juggler(player.PlayerListener):
                     if not self._songlist:
                         self._player.play_fallback()
                     else:
-                        self._player.play(self._songlist[0])
+                        track = self._songlist[0]
+                        self._player.play(track)
             finally:
                 self.lock.release()
             self._clients.message_clients(self.get_list())
 
-    def _sanitize_item(self, item: Track) -> ListResponseEntry:
-        return {
-            "id": item["id"],
-            "title": item["title"],
-            "nick": item.get("nick", ""),
-            "address": item["address"],
-            "prio": item["prio"],
-        }
-
-    def get_list(self) -> ListResponse | FallbackResponse:
+    def get_list(self) -> _types.ListResponse:
         self.lock.acquire()
         try:
             if self._songlist:
-                position = self._player.get_position()
-                return {
-                    "type": "list",
-                    "position": position,
-                    "list": list(map(self._sanitize_item, self._songlist)),
-                }
+                return _types.ListContentResponse(
+                    position=self._player.get_position(),
+                    list=[
+                        _types.ListContentResponseEntry(
+                            id=item.id,
+                            title=item.title,
+                            nick=item.nick,
+                            address=item.address,
+                            prio=item.prio,
+                        )
+                        for item in self._songlist
+                    ],
+                )
             else:
                 if self._running:
                     message = f"Now playing {self._player.fallback_type}..."
                 else:
                     message = "Not active"
-                return {"type": "fallback", "description": message}
+                return _types.ListFallbackResponse(description=message)
         finally:
             self.lock.release()
