@@ -221,6 +221,7 @@ class Player:
         track_choices = tracks - {self._current_fallback_track}
         if track_choices:
             self._current_fallback_track = random.choice(tuple(track_choices))
+        assert self._current_fallback_track
         url = self._get_link_url(self._current_fallback_track)
         assert url is not None, "Error getting fallback URL"
         self._play_mrl(url, random.random() if start_random else None)
