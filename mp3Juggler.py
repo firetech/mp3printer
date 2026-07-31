@@ -371,7 +371,10 @@ class Juggler(player.PlayerListener):
                 )
             else:
                 if self._running:
-                    message = f"Now playing {self._player.fallback_type}..."
+                    if (fallback_type := self._player.fallback_type) is not None:
+                        message = f"Now playing {fallback_type}..."
+                    else:
+                        message = "Currently silent. Add something to the queue!"
                 else:
                     message = "Not active"
                 return _types.ListFallbackResponse(description=message)

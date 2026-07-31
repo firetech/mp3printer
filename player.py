@@ -172,7 +172,7 @@ class Player:
     def fallback_type(self):
         match self._fallback_type:
             case FallbackType.NONE:
-                return "nothing"
+                return None
             case FallbackType.SLAYRADIO:
                 return "Slay Radio"
             case FallbackType.DUBSTEP:
@@ -187,11 +187,9 @@ class Player:
                 available_types = (
                     set(FallbackType) - {FallbackType.NONE} - self._disabled_fallbacks
                 )
-                if not available_types:
-                    available_types.add(FallbackType.NONE)
                 if len(available_types) == 1:
                     self._fallback_type = available_types.pop()
-                else:
+                elif available_types:
                     # Make sure we don't select previous type again
                     self._fallback_type = random.choice(
                         tuple(available_types - {self._previous_fallback_type})
