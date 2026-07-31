@@ -339,7 +339,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--proxied",
         action="store_true",
-        help="Use X-Forwarded-For header instead of actual client IP to identify clients.",
+        help="Use X-Forwarded-For header instead of actual client IP to identify clients",
     )
     parser.add_argument(
         "-b",
@@ -355,14 +355,14 @@ if __name__ == "__main__":
             "--chromecast",
             type=str,
             metavar="NAME",
-            help="Name of Chromecast (or Chromecast group) to cast to.",
+            help="Name of Chromecast (or Chromecast group) to cast to",
             default=None,
         )
         parser.add_argument(
             "-C",
             "--chromecast-list",
             action="store_true",
-            help="List available Chromecast (and Chromecast group) names and exit.",
+            help="List available Chromecast (and Chromecast group) names and exit",
         )
     parser.add_argument(
         "port",
@@ -379,9 +379,29 @@ if __name__ == "__main__":
         metavar="DIR",
         help="Store queue content and uploaded files in this directory",
     )
+    parser.add_argument(
+        "-F",
+        "--disable-fallback",
+        type=str,
+        action="append",
+        metavar=f"all|{'|'.join(t.value for t in player.FallbackType if t.value)}",
+        help="Disable a fallback type. Can be specified multiple times. Disabling all types will make the output silent when the queue is empty",
+    )
     args = parser.parse_args()
 
     player_args: player.PlayerArgs = {}
+
+    if args.disable_fallback:
+        player_args["disabled_fallbacks"] = set()
+        for fallback_type in args.disable_fallback:
+            if fallback_type == "all":
+                player_args["disabled_fallbacks"].update(
+                    set(player.FallbackType) - {player.FallbackType.NONE}
+                )
+            else:
+                player_args["disabled_fallbacks"].add(
+                    player.FallbackType(fallback_type)
+                )
 
     if pychromecast:
         if args.chromecast_list:

@@ -22,10 +22,6 @@ class PlayerListener(Protocol):
     def song_finished(self) -> None: ...
 
 
-class PlayerArgs(TypedDict):
-    chromecast: NotRequired[tuple[str, int]]
-
-
 class CommonTrackInfo(pyd.BaseModel):
     title: str
     mrl: str
@@ -43,21 +39,26 @@ TrackInfo: TypeAlias = FileTrackInfo | LinkTrackInfo
 
 
 class FallbackType(enum.Enum):
-    NONE = 0
-    SLAYRADIO = 1
-    DUBSTEP = 2
-    POPLOVE = 3
+    NONE = None
+    SLAYRADIO = "slayradio"
+    DUBSTEP = "dubstep"
+    POPLOVE = "poplove"
+
+
+class PlayerArgs(TypedDict):
+    chromecast: NotRequired[tuple[str, int]]
+    disabled_fallbacks: NotRequired[set[FallbackType]]
 
 
 class Player:
 
     SLAYRADIO: Final = "http://relay.slayradio.org:8000/"
-    DUBSTEP: Final = [
+    DUBSTEP: Final = {
         "https://www.youtube.com/watch?v=dLyH94jNau0",
         "https://www.youtube.com/watch?v=RRucF7ffPRE",
         "https://www.youtube.com/watch?v=nXaMKZApYDM",
-    ]
-    POPLOVE: Final = [
+    }
+    POPLOVE: Final = {
         "https://www.youtube.com/watch?v=QcYn1xM7VZg",
         "https://www.youtube.com/watch?v=b6MGVFBpi9Q",
         "https://www.youtube.com/watch?v=KuPBK8Bx3iI",
@@ -69,7 +70,7 @@ class Player:
         "https://www.youtube.com/watch?v=BpEQMV_Pih0",
         "https://www.youtube.com/watch?v=zQAFN1NZd50",
         "https://www.youtube.com/watch?v=-sAEJaKwFZM",
-    ]
+    }
     SCRATCH: Final = "shortscratch.wav"
 
     def __init__(self, listener: PlayerListener, args: PlayerArgs):
@@ -81,6 +82,10 @@ class Player:
             # These options don't work as instance options, for some reason...
             self._media_opts.append(":sout=#chromecast{ip=%s,port=%d}" % chromecast)
             self._media_opts.append(":demux-filter=demux_chromecast")
+        self._disabled_fallbacks: set[FallbackType] = set()
+        if disabled_fallbacks := args.get("disabled_fallbacks"):
+            # Don't allow disabling NONE.
+            self._disabled_fallbacks.update(disabled_fallbacks - {FallbackType.NONE})
         self._instance = cast(vlc.Instance, vlc.Instance(*instance_opts))
         self._mediaplayer = cast(
             vlc.MediaPlayer,
@@ -179,15 +184,22 @@ class Player:
         try:
             last_fallback_type = self._fallback_type
             if self._fallback_type == FallbackType.NONE:
-                self._fallback_type = self._previous_fallback_type
-                while self._fallback_type == self._previous_fallback_type:
-                    self._fallback_type = FallbackType(
-                        random.randint(1, len(FallbackType) - 1)
+                available_types = (
+                    set(FallbackType) - {FallbackType.NONE} - self._disabled_fallbacks
+                )
+                if not available_types:
+                    available_types.add(FallbackType.NONE)
+                if len(available_types) == 1:
+                    self._fallback_type = available_types.pop()
+                else:
+                    # Make sure we don't select previous type again
+                    self._fallback_type = random.choice(
+                        tuple(available_types - {self._previous_fallback_type})
                     )
                 self._previous_fallback_type = self._fallback_type
             match self._fallback_type:
                 case FallbackType.NONE:
-                    pass  # This is impossible
+                    pass  # Do nothing
                 case FallbackType.SLAYRADIO:
                     print("Now playing: Slay Radio")
                     self._play_mrl(self.SLAYRADIO)
@@ -201,20 +213,16 @@ class Player:
                     self._play_fallback_list(
                         self.POPLOVE, last_fallback_type == FallbackType.NONE
                     )
-                    pass
         except Exception as err:
             print(err)
             self._fallback_type = FallbackType.NONE
             self._listener.song_finished()
 
-    def _play_fallback_list(self, fallback_list: list[str], start_random: bool):
-        last_fallback_track = self._current_fallback_track
-        self._current_fallback_track = random.randint(0, len(fallback_list) - 1)
-        # Make sure we don't select the same one (unless the list is only a single item)
-        if self._current_fallback_track == last_fallback_track:
-            self._current_fallback_track = (self._current_fallback_track + 1) % len(
-                fallback_list
-            )
-        url = self._get_link_url(fallback_list[self._current_fallback_track])
+    def _play_fallback_list(self, tracks: set[str], start_random: bool):
+        # Make sure we select a new track (unless list is a single item)
+        track_choices = tracks - {self._current_fallback_track}
+        if track_choices:
+            self._current_fallback_track = random.choice(tuple(track_choices))
+        url = self._get_link_url(self._current_fallback_track)
         assert url is not None, "Error getting fallback URL"
         self._play_mrl(url, random.random() if start_random else None)
