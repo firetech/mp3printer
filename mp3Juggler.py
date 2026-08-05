@@ -1,12 +1,14 @@
 # pyright: strict
 
+from __future__ import annotations
+
 import collections
 import pathlib as pl
 import tempfile
 import threading
 import time
 import uuid
-from typing import Final, Literal, TypeAlias
+from typing import Annotated, Final, Literal, TypeAlias
 
 import pydantic as pyd
 
@@ -38,15 +40,16 @@ class LinkTrackInput(TrackInputCommon):
     type: Literal["link"] = "link"
 
 
-class TrackAssigned(pyd.BaseModel):
+class _TrackAssigned(pyd.BaseModel):
     id: str
     prio: int
+    next: Annotated[Track | None, pyd.Field(exclude=True)] = None
 
 
-class FileTrack(TrackAssigned, FileTrackInput, player.FileTrackInfo): ...
+class FileTrack(_TrackAssigned, FileTrackInput, player.FileTrackInfo): ...
 
 
-class LinkTrack(TrackAssigned, LinkTrackInput, player.LinkTrackInfo): ...
+class LinkTrack(_TrackAssigned, LinkTrackInput, player.LinkTrackInfo): ...
 
 
 TrackInput: TypeAlias = FileTrackInput | LinkTrackInput
@@ -93,8 +96,10 @@ class Juggler(player.PlayerListener):
         else:
             self._persist_dir = None
             self._expected_file_dir = pl.Path(tempfile.gettempdir()).resolve()
+        self._player: player.Player | None = None
         self._start_position = None
-        self._songlist: list[Track] = []
+        self._songlist: Track | None = None
+        self._upload_ids: collections.Counter[str | None] = collections.Counter()
         self._counts: collections.Counter[str | None] = collections.Counter()
         self._event = threading.Event()
         self._waiting: dict[str, _ParentWaiter] = {}
@@ -111,29 +116,49 @@ class Juggler(player.PlayerListener):
         state_file = self._persist_dir / STATE_FILENAME
         if not state_file.is_file():
             return
+        self.lock.acquire()
         try:
             with state_file.open("r") as f:
                 state = PersistentState.model_validate_json(f.read())
             self.clear()
-            self._songlist = state.queue
-            self._counts = collections.Counter(
-                [song.address for song in self._songlist]
+            prev: Track | None = None
+            for track in state.queue:
+                if prev is None:
+                    self._songlist = track
+                else:
+                    prev.next = track
+                prev = track
+            self._counts = collections.Counter([song.address for song in state.queue])
+            self._upload_ids = collections.Counter(
+                [song.upload_id for song in state.queue]
             )
             self._start_position = state.position
         except Exception as e:
             print(f"Error loading persistent state: {e}")
+        finally:
+            self.lock.release()
 
-    def _store_persist_state(self):
+    def _songlist_items(self):
+        song = self._songlist
+        while song is not None:
+            yield song
+            song = song.next
+
+    def _store_persist_state(self, set_start_pos: bool = False):
         self.lock.acquire()
         try:
             if self._persist_dir is None:
                 return
-            self._start_position = (
-                self._player.get_position() if self._songlist else None
+            position = (
+                self._player.get_position()
+                if self._player is not None and self._songlist is not None
+                else None
             )
+            if set_start_pos:
+                self._start_position = position
             state = PersistentState(
-                queue=self._songlist,
-                position=self._start_position,
+                queue=list(self._songlist_items()),
+                position=position,
             )
             with (self._persist_dir / STATE_FILENAME).open("w") as f:
                 f.write(state.model_dump_json(indent=2))
@@ -151,12 +176,24 @@ class Juggler(player.PlayerListener):
             except:
                 pass
 
-    def _remove_song(self, index: int, song: Track | None = None):
-        if song is None:
-            song = self._songlist[index]
-        self._remove_song_file(song)
-        self._counts[song.address] -= 1
-        del self._songlist[index]
+    def _remove_next(self, prev: Track | None = None):
+        self.lock.acquire()
+        try:
+            if prev is None:
+                song = self._songlist
+            else:
+                song = prev.next
+            if song is None:
+                return
+            self._remove_song_file(song)
+            self._counts[song.address] -= 1
+            self._upload_ids[song.upload_id] -= 1
+            if prev is None:
+                self._songlist = song.next
+            else:
+                prev.next = song.next
+        finally:
+            self.lock.release()
 
     def start(self):
         if not self._running:
@@ -168,7 +205,7 @@ class Juggler(player.PlayerListener):
             self._progress_thread.start()
             self._clients.message_clients(self.get_list())
             if self._songlist:
-                self._player.play(self._songlist[0], self._start_position)
+                self._player.play(self._songlist, self._start_position)
             else:
                 self._player.play_fallback()
             self._start_position = None
@@ -180,22 +217,26 @@ class Juggler(player.PlayerListener):
             if self._persist_dir is None:
                 self.clear()
             else:
-                self._store_persist_state()
+                self._store_persist_state(True)
             self._next_thread.join()
             self._progress_thread.join()
-            self._player.release()
+            if self._player is not None:
+                self._player.release()
+            self._player = None
 
     def skip(self):
         self.lock.acquire()
         try:
-            self._player.scratch()
+            if self._player is not None:
+                self._player.scratch()
         finally:
             self.lock.release()
 
     def pause(self):
         self.lock.acquire()
         try:
-            self._player.pause()
+            if self._player is not None:
+                self._player.pause()
         finally:
             self.lock.release()
 
@@ -209,10 +250,7 @@ class Juggler(player.PlayerListener):
         self.lock.acquire()
         try:
             if parent_id is not None:
-                for song in reversed(self._songlist):
-                    if song.upload_id == parent_id:
-                        break
-                else:  # Not found
+                if not self._upload_ids[parent_id]:
                     remove = True
                     try:
                         if not parent_id in self._waiting:
@@ -224,24 +262,22 @@ class Juggler(player.PlayerListener):
                     finally:
                         if remove:
                             self._remove_song_file(track_input)
-
-            self._counts[track_input.address] += 1
             if self._config.prio_dropoff <= 0:
                 prio = 1
             else:
                 prio = (
                     max(
-                        self._counts[track_input.address] - self._config.prio_dropoff, 0
+                        (self._counts[track_input.address] + 1)
+                        - self._config.prio_dropoff,
+                        0,
                     )
                     + 1
                 )
-            index = 0
-            if len(self._songlist) > 0:
-                index = 1
-                for item in self._songlist[1:]:
-                    if item.prio > prio:
-                        break
-                    index += 1
+            prev = self._songlist
+            if prev is not None:
+                while prev.next is not None and prev.next.prio <= prio:
+                    prev = prev.next
+
             extn = track_input.extn if isinstance(track_input, FileTrackInput) else None
             queue_id = str(uuid.uuid4()) + (extn or "")
             match track_input.type:
@@ -269,11 +305,19 @@ class Juggler(player.PlayerListener):
                         address=track_input.address,
                         mrl=track_input.mrl,
                     )
-            self._songlist.insert(index, track)
+            if prev is None:
+                track.next = self._songlist
+                self._songlist = track
+            else:
+                track.next = prev.next
+                prev.next = track
+            self._counts[track.address] += 1
+            self._upload_ids[track.upload_id] += 1
 
-            if len(self._songlist) == 1:
+            self._store_persist_state()
+
+            if prev is None and self._player is not None:
                 self._player.play(track)
-                self._store_persist_state()
 
             if (
                 track_input.upload_id is not None
@@ -288,7 +332,7 @@ class Juggler(player.PlayerListener):
     def download(self, track_id: str) -> DownloadInfo | None:
         self.lock.acquire()
         try:
-            for song in self._songlist:
+            for song in self._songlist_items():
                 if song.id == track_id:
                     return DownloadInfo(
                         type=song.type,
@@ -297,21 +341,23 @@ class Juggler(player.PlayerListener):
                         ),
                         mrl=song.mrl,
                     )
-            else:  # Not found
-                return None
+            return None
         finally:
             self.lock.release()
 
     def cancel(self, track_id: str, address: str | None):
         self.lock.acquire()
         try:
-            for i, song in list(enumerate(self._songlist)):
+            prev = None
+            for song in self._songlist_items():
                 if song.id == track_id and song.address == address:
-                    if i == 0:
+                    if prev is None:
                         self.skip()
                     else:
-                        self._remove_song(i, song)
+                        self._remove_next(prev)
                     break
+                prev = song
+            self._store_persist_state()
         finally:
             self.lock.release()
         self._clients.message_clients(self.get_list())
@@ -322,10 +368,11 @@ class Juggler(player.PlayerListener):
             for wait in self._waiting.values():
                 wait.done(False)
             self._waiting.clear()
-            for i, song in reversed(list(enumerate(self._songlist))):
-                if i == 0:
-                    self.skip()
-                self._remove_song(i, song)
+            had_content = self._songlist is not None
+            while self._songlist is not None:
+                self._remove_next()
+            if self._running and had_content:
+                self.skip()
         finally:
             self.lock.release()
         self._clients.message_clients(self.get_list())
@@ -341,7 +388,10 @@ class Juggler(player.PlayerListener):
     def send_progress(self):
         self.lock.acquire()
         try:
-            position = self._player.get_position()
+            if self._player is not None:
+                position = self._player.get_position()
+            else:
+                position = 0.0
         finally:
             self.lock.release()
         if position > 0:
@@ -354,16 +404,16 @@ class Juggler(player.PlayerListener):
             if not self._running:
                 break
             self.lock.acquire()
+            assert self._player is not None
             try:
-                if not self._songlist:
+                if self._songlist is None:
                     self._player.play_fallback()
                 else:
-                    self._remove_song(0)
+                    self._remove_next()
                     if not self._songlist:
                         self._player.play_fallback()
                     else:
-                        track = self._songlist[0]
-                        self._player.play(track)
+                        self._player.play(self._songlist)
             finally:
                 self.lock.release()
             self._clients.message_clients(self.get_list())
@@ -372,9 +422,11 @@ class Juggler(player.PlayerListener):
     def get_list(self) -> _types.ListResponse:
         self.lock.acquire()
         try:
-            if self._songlist:
+            if self._songlist is not None:
                 return _types.ListContentResponse(
-                    position=self._player.get_position(),
+                    position=(
+                        self._player.get_position() if self._player is not None else 0.0
+                    ),
                     list=[
                         _types.ListContentResponseEntry(
                             id=item.id,
@@ -384,12 +436,15 @@ class Juggler(player.PlayerListener):
                             address=item.address,
                             prio=item.prio,
                         )
-                        for item in self._songlist
+                        for item in self._songlist_items()
                     ],
                 )
             else:
                 if self._running:
-                    if (fallback_type := self._player.fallback_name) is not None:
+                    if (
+                        self._player is not None
+                        and (fallback_type := self._player.fallback_name) is not None
+                    ):
                         message = f"Now playing {fallback_type}..."
                     else:
                         message = "Currently silent. Add something to the queue!"
