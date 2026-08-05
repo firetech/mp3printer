@@ -1,3 +1,5 @@
 *.mp3
 /cookies.txt
 __pycache__
+/data
+/config.toml

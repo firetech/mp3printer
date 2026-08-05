@@ -1,7 +1,6 @@
 # pyright: strict
 
 import collections
-import os
 import pathlib as pl
 import tempfile
 import threading
@@ -12,6 +11,7 @@ from typing import Final, Literal, TypeAlias
 import pydantic as pyd
 
 # local libs
+import _config
 import _types
 import connections
 import player
@@ -83,18 +83,17 @@ class Juggler(player.PlayerListener):
     def __init__(
         self,
         clients: connections.Connections,
-        persist_dir: os.PathLike[str] | str | None = None,
-        player_args: player.PlayerArgs | None = None,
+        config: _config.PrinterConfig,
     ):
         self._clients = clients
-        if persist_dir:
-            self._persist_dir = pl.Path(persist_dir).resolve()
+        self._config = config
+        if config.persist_dir:
+            self._persist_dir = config.persist_dir.resolve()
             self._expected_file_dir = self._persist_dir
         else:
             self._persist_dir = None
             self._expected_file_dir = pl.Path(tempfile.gettempdir()).resolve()
         self._start_position = None
-        self._player_args: player.PlayerArgs = player_args or {}
         self._songlist: list[Track] = []
         self._counts: collections.Counter[str | None] = collections.Counter()
         self._event = threading.Event()
@@ -161,7 +160,7 @@ class Juggler(player.PlayerListener):
 
     def start(self):
         if not self._running:
-            self._player = player.Player(self, self._player_args)
+            self._player = player.Player(self, self._config)
             self._next_thread = threading.Thread(target=self.play_next, args=())
             self._progress_thread = threading.Thread(target=self.time_change, args=())
             self._running = True
@@ -227,7 +226,15 @@ class Juggler(player.PlayerListener):
                             self._remove_song_file(track_input)
 
             self._counts[track_input.address] += 1
-            prio = max(self._counts[track_input.address] - 3, 0)
+            if self._config.prio_dropoff <= 0:
+                prio = 1
+            else:
+                prio = (
+                    max(
+                        self._counts[track_input.address] - self._config.prio_dropoff, 0
+                    )
+                    + 1
+                )
             index = 0
             if len(self._songlist) > 0:
                 index = 1
@@ -382,7 +389,7 @@ class Juggler(player.PlayerListener):
                 )
             else:
                 if self._running:
-                    if (fallback_type := self._player.fallback_type) is not None:
+                    if (fallback_type := self._player.fallback_name) is not None:
                         message = f"Now playing {fallback_type}..."
                     else:
                         message = "Currently silent. Add something to the queue!"

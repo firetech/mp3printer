@@ -3,6 +3,7 @@
 import argparse
 import json
 import os
+import pathlib as pl
 import re
 import shutil
 import signal
@@ -34,16 +35,16 @@ except ModuleNotFoundError:
     youtube_search = None
 
 # local libs
+import _config
 import _types
 import connections
 import mp3Juggler
-import player
 
-loop = None
-clients = None
-juggler = None
-http_server = None
-persist_dir = None
+loop: tornado.ioloop.IOLoop | None = None
+clients: connections.Connections | None = None
+juggler: mp3Juggler.Juggler | None = None
+http_server: tornado.httpserver.HTTPServer | None = None
+persist_dir: pl.Path | None = None
 
 ANSI_ESCAPE: Final = re.compile(r"(\x9B|\x1B\[)[0-?]*[ -/]*[@-~]")
 ERROR_PREFIX: Final = re.compile(r"^[Ee][Rr][Rr]([Oo][Rr])?:\s*")
@@ -192,6 +193,7 @@ class AddLink(tornado.web.RequestHandler):
                 {
                     "cookiefile": "cookies.txt",
                     "quiet": True,
+                    "no_warnings": True,
                     "format": "bestaudio/best",
                 }
             ) as ydl:
@@ -288,16 +290,17 @@ class WSHandler(tornado.websocket.WebSocketHandler):
         clients.close_connection(self)
 
 
-def start(
-    port: int = 80,
-    bind: str | None = None,
-    player_args: player.PlayerArgs | None = None,
-):
-    global loop, clients, juggler, http_server
+def start(config: _config.PrinterConfig):
+    global loop, clients, juggler, http_server, persist_dir, remote_ip
+
+    if config.proxied:
+        remote_ip = forwarded_remote_ip
+    persist_dir = config.persist_dir
+
     loop = tornado.ioloop.IOLoop.current()
 
     clients = connections.Connections(loop)
-    juggler = mp3Juggler.Juggler(clients, persist_dir, player_args)
+    juggler = mp3Juggler.Juggler(clients, config)
 
     application = tornado.web.Application(
         [
@@ -315,7 +318,9 @@ def start(
         application,
         max_body_size=1024 * 1024 * 1024,  # 1GiB
     )
-    http_server.listen(port=port, address=bind)
+    assert http_server is not None
+    http_server.listen(port=config.port, address=config.bind)
+    print("*** Web Server Started on %s:%s***" % (config.bind or "*", config.port))
 
     threading.Thread(target=loop.start).start()
     juggler.start()
@@ -336,75 +341,25 @@ def stop():
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Musical democracy")
-    parser.add_argument(
-        "--proxied",
-        action="store_true",
-        help="Use X-Forwarded-For header instead of actual client IP to identify clients",
-    )
-    parser.add_argument(
-        "-b",
-        "--bind",
-        type=str,
-        metavar="IP",
-        help="IP to run HTTP server on (default: any IP)",
-        default=None,
-    )
     if pychromecast:
         parser.add_argument(
-            "-c",
-            "--chromecast",
-            type=str,
-            metavar="NAME",
-            help="Name of Chromecast (or Chromecast group) to cast to",
-            default=None,
-        )
-        parser.add_argument(
             "-C",
-            "--chromecast-list",
+            "--list-chromecasts",
             action="store_true",
             help="List available Chromecast (and Chromecast group) names and exit",
         )
     parser.add_argument(
-        "port",
-        metavar="PORT",
-        type=int,
+        "config_file",
+        metavar="CONFIG_FILE",
+        type=str,
         nargs="?",
-        help="Port number to run HTTP server on (default 80)",
-        default=80,
-    )
-    parser.add_argument(
-        "-p",
-        "--persist",
-        type=str,
-        metavar="DIR",
-        help="Store queue content and uploaded files in this directory",
-    )
-    parser.add_argument(
-        "-F",
-        "--disable-fallback",
-        type=str,
-        action="append",
-        metavar=f"all|{'|'.join(t.value for t in player.FallbackType if t.value)}",
-        help="Disable a fallback type. Can be specified multiple times. Disabling all types will make the output silent when the queue is empty",
+        help="Config file to use (default 'config.toml')",
+        default="config.toml",
     )
     args = parser.parse_args()
 
-    player_args: player.PlayerArgs = {}
-
-    if args.disable_fallback:
-        player_args["disabled_fallbacks"] = set()
-        for fallback_type in args.disable_fallback:
-            if fallback_type == "all":
-                player_args["disabled_fallbacks"].update(
-                    set(player.FallbackType) - {player.FallbackType.NONE}
-                )
-            else:
-                player_args["disabled_fallbacks"].add(
-                    player.FallbackType(fallback_type)
-                )
-
     if pychromecast:
-        if args.chromecast_list:
+        if args.list_chromecasts:
             print("Scanning for Chromecasts...")
             services, browser = pychromecast.discovery.discover_chromecasts()
             pychromecast.discovery.stop_discovery(browser)
@@ -416,29 +371,6 @@ if __name__ == "__main__":
                 print("No Chromecast targets found.")
             exit(0)
 
-        if args.chromecast is not None:
-            services, browser = pychromecast.discovery.discover_listed_chromecasts(
-                friendly_names=[args.chromecast]
-            )
-            pychromecast.discovery.stop_discovery(browser)
-            if len(services) < 1:
-                print('Could not find Chromecast (or group) "%s"' % args.chromecast)
-                exit(1)
-            elif len(services) > 1:
-                print(
-                    'More than one Chromecast (or group) matched "%s"' % args.chromecast
-                )
-                exit(1)
-
-            player_args["chromecast"] = (services[0].host, services[0].port)
-
-    if args.proxied:
-        remote_ip = forwarded_remote_ip
-
-    if args.persist:
-        os.makedirs(args.persist, exist_ok=True)
-        persist_dir = args.persist
-
     def signal_handler(sig: int, _: Any):
         print(f"\nSignal {sig} caught, exiting...")
         stop()
@@ -447,9 +379,10 @@ if __name__ == "__main__":
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
+    config = _config.parse(args.config_file)
+
     try:
-        start(args.port, args.bind, player_args)
-        print("*** Web Server Started on %s:%s***" % (args.bind or "*", args.port))
+        start(config)
     except Exception as err:
         print("Error starting web server:", err)
         exit(1)

@@ -1,0 +1,86 @@
+##########
+# Server #
+##########
+
+# IP to run HTTP server on (defaults to any IP if not specified).
+# bind = 127.0.0.1
+
+# Port to run HTTP server on (default 80 if not specified).
+port = 8080
+
+# Use X-Forwarded-For header instead of actual client IP to identify clients.
+proxied = false
+
+
+#########
+# Queue #
+#########
+
+# How many tracks one user can have in the queue before priority starts to drop
+# for newly added tracks.
+# Set to 0 or a negative value to play all tracks in upload order.
+prio_dropoff = 3
+
+# Name of directory used for persistent data.
+# If not set, uploaded tracks are stored in the default temporary directory, and
+# queue content is lost when the process is stopped.
+persist_dir = "data"
+
+
+##########
+# Output #
+##########
+
+# Name of Chromecast (or Chromecast group) to cast to. Requires pychromecast.
+# Run with `-C` to get a list.
+# chromecast = "Living Room"
+
+
+####################
+# Fallback Sources #
+####################
+# Each fallback needs a `name` (string) and `source` (string or list).
+# `random = true` on a fallback means that a random track and position will be
+#   chosen when switching to that fallback source.
+#
+# For local files:
+# * Prefix paths with "FILE:".
+# * Use "**" to match any file in any subdirectory (including no subdirectory).
+#
+# Remove all fallback sources to make output silent when queue is empty.
+# Note that Spotify links will NOT work in this context.
+
+# [[fallback]]
+# name = "Local Media Archive"
+# source = "FILE:~/Music/**"
+# random = true
+
+[[fallback]]
+name = "SLAY Radio"
+source = "http://relay.slayradio.org:8000"
+
+[[fallback]]
+name = "Dubstep"
+source = [
+    "https://www.youtube.com/watch?v=dLyH94jNau0",
+    "https://www.youtube.com/watch?v=RRucF7ffPRE",
+    "https://www.youtube.com/watch?v=nXaMKZApYDM",
+]
+random = true
+
+[[fallback]]
+name = "PopLove"
+source = [
+    "https://www.youtube.com/watch?v=QcYn1xM7VZg",
+    "https://www.youtube.com/watch?v=b6MGVFBpi9Q",
+    "https://www.youtube.com/watch?v=KuPBK8Bx3iI",
+    "https://www.youtube.com/watch?v=mX8f5nfkr7E",
+    "https://www.youtube.com/watch?v=TXGtR1_iyDg",
+    "https://www.youtube.com/watch?v=KPFVrhUdrHk",
+    "https://www.youtube.com/watch?v=0YVwtb8pZZY",
+    "https://www.youtube.com/watch?v=XUkU0noAGck",
+    "https://www.youtube.com/watch?v=BpEQMV_Pih0",
+    "https://www.youtube.com/watch?v=zQAFN1NZd50",
+    "https://www.youtube.com/watch?v=-sAEJaKwFZM",
+]
+random = true
