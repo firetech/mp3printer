@@ -124,6 +124,23 @@ class Juggler(player.PlayerListener):
         except Exception as e:
             print(f"Error loading persistent state: {e}")
 
+    def _store_persist_state(self):
+        self.lock.acquire()
+        try:
+            if self._persist_dir is None:
+                return
+            self._start_position = (
+                self._player.get_position() if self._songlist else None
+            )
+            state = PersistentState(
+                queue=self._songlist,
+                position=self._start_position,
+            )
+            with (self._persist_dir / STATE_FILENAME).open("w") as f:
+                f.write(state.model_dump_json(indent=2))
+        finally:
+            self.lock.release()
+
     def _remove_song_file(self, song: TrackInput):
         if isinstance(song, FileTrackInput):
             try:
@@ -164,15 +181,7 @@ class Juggler(player.PlayerListener):
             if self._persist_dir is None:
                 self.clear()
             else:
-                self._start_position = (
-                    self._player.get_position() if self._songlist else None
-                )
-                state = PersistentState(
-                    queue=self._songlist,
-                    position=self._start_position,
-                )
-                with (self._persist_dir / STATE_FILENAME).open("w") as f:
-                    f.write(state.model_dump_json(indent=2))
+                self._store_persist_state()
             self._next_thread.join()
             self._progress_thread.join()
             self._player.release()
@@ -257,6 +266,7 @@ class Juggler(player.PlayerListener):
 
             if len(self._songlist) == 1:
                 self._player.play(track)
+                self._store_persist_state()
 
             if (
                 track_input.upload_id is not None
@@ -350,6 +360,7 @@ class Juggler(player.PlayerListener):
             finally:
                 self.lock.release()
             self._clients.message_clients(self.get_list())
+            self._store_persist_state()
 
     def get_list(self) -> _types.ListResponse:
         self.lock.acquire()
