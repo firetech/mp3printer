@@ -101,6 +101,7 @@ class Juggler(player.PlayerListener):
         self._start_position = None
         self._queue_head: Track | None = None
         self._tracks: dict[str, Track] = {}
+        self._prio_tail: dict[int, Track] = {}
         self._upload_ids: collections.Counter[str | None] = collections.Counter()
         self._counts: collections.Counter[str | None] = collections.Counter()
         self._event = threading.Event()
@@ -131,6 +132,7 @@ class Juggler(player.PlayerListener):
                 else:
                     prev.next = track
                     track.prev = prev
+                self._prio_tail[track.prio] = track
                 prev = track
             self._counts.update(track.address for track in state.queue)
             self._upload_ids.update(track.upload_id for track in state.queue)
@@ -188,6 +190,11 @@ class Juggler(player.PlayerListener):
             self._upload_ids[track.upload_id] -= 1
             if track is self._queue_head:
                 self._queue_head = track.next
+            if self._prio_tail.get(track.prio) is track:
+                if track.prev is not None and track.prev.prio == track.prio:
+                    self._prio_tail[track.prio] = track.prev
+                else:
+                    del self._prio_tail[track.prio]
             if track.prev is not None:
                 track.prev.next = track.next
             if track.next is not None:
@@ -275,8 +282,14 @@ class Juggler(player.PlayerListener):
                 )
             prev = self._queue_head
             if prev is not None:
-                while prev.next is not None and prev.next.prio <= prio:
-                    prev = prev.next
+                prev_prio = prio
+                while (
+                    (prio_tail := self._prio_tail.get(prev_prio)) is None
+                    or prio_tail is self._queue_head
+                ) and prev_prio > 0:
+                    prev_prio -= 1
+                if prev_prio > 0:
+                    prev = prio_tail
 
             extn = track_input.extn if isinstance(track_input, FileTrackInput) else None
             queue_id = None
@@ -318,6 +331,7 @@ class Juggler(player.PlayerListener):
                 track.prev = prev
                 prev.next = track
             self._tracks[track.id] = track
+            self._prio_tail[track.prio] = track
             self._counts[track.address] += 1
             self._upload_ids[track.upload_id] += 1
 
@@ -373,8 +387,9 @@ class Juggler(player.PlayerListener):
             had_content = self._queue_head is not None
             for track in self._queue_items():
                 self._remove_file(track)
-            self._tracks.clear()
             self._queue_head = None
+            self._tracks.clear()
+            self._prio_tail.clear()
             self._counts.clear()
             self._upload_ids.clear()
             if self._running and had_content:
