@@ -165,21 +165,21 @@
     100% { color: rgba(208, 177,27, 1.0); }
   }
 
-  .printtable .cancel-song {
+  .printtable .cancel-track {
     font-family: monospace;
     margin-right: 0.2em;
   }
-  .printtable .cancel-song::before, .printtable .cancel-song::after {
+  .printtable .cancel-track::before, .printtable .cancel-track::after {
     color: #806d11;
     text-shadow: none;
   }
-  .printtable .cancel-song::before {
+  .printtable .cancel-track::before {
     content: '[';
   }
-  .printtable .cancel-song::after {
+  .printtable .cancel-track::after {
     content: ']';
   }
-  .printtable .cancel-song a::before {
+  .printtable .cancel-track a::before {
     content: 'X';
   }
 
@@ -274,9 +274,9 @@
         .appendTo(row);
       if (curr['address'] == myaddress){
         var cancel = $('<span></span>', {
-          class: 'cancel-song'});
+          class: 'cancel-track'});
         cancel.append($('<a></a>', {
-          title: 'Cancel song',
+          title: 'Cancel track',
           href: '#',
           data: { id: curr['id'] },
           click: function(event) {

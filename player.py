@@ -14,7 +14,7 @@ import _config
 
 
 class PlayerListener(Protocol):
-    def song_finished(self) -> None: ...
+    def track_finished(self) -> None: ...
 
 
 class CommonTrackInfo(pyd.BaseModel):
@@ -87,11 +87,11 @@ class Player:
             # However, if a web radio stream gets "end reached", it's probably an error
             self._mark_fallback_bad()
 
-        self._listener.song_finished()
+        self._listener.track_finished()
 
     def _vlc_encountered_error(self, *args: Any):
         self._mark_fallback_bad()
-        self._listener.song_finished()
+        self._listener.track_finished()
 
     def release(self):
         self._mediaplayer.stop()
@@ -142,7 +142,7 @@ class Player:
             self._play_mrl(mrl, position)
         except Exception as err:
             print(err)
-            self._listener.song_finished()
+            self._listener.track_finished()
 
     def pause(self):
         self._mediaplayer.pause()
@@ -222,4 +222,4 @@ class Player:
             print(f"Error playing fallback: {err}")
             self._bad_fallbacks.add(self._fallback_idx)
             self._clear_fallback(False)
-            self._listener.song_finished()
+            self._listener.track_finished()
